@@ -250,10 +250,10 @@ if 1 in Action:
             ed = utils.time.t2dt(optData["tRange"][1]) - dt.timedelta(days=nDay)
             dfdi = camels.DataframeCamels(subset=optData["subset"], tRange=[sd, ed])
             datatemp = dfdi.getDataObs(
-                doNorm=False, rmNan=False, basinnorm=True
+                doNorm=False, rmNan=False, basinnorm=True, flow_regime=flow_regime
             )  # 'basinnorm=True': output = discharge/(area*mean_precip)
             # normalize data
-            dadata = camels.transNormbyDic(datatemp, "runoff", statDict, toNorm=True)
+            dadata = camels.transNormbyDic(datatemp, "runoff", statDict, toNorm=True, flow_regime=flow_regime)
             dadata[np.where(np.isnan(dadata))] = 0.0
 
             xIn = np.concatenate([xTrain, dadata], axis=2)
@@ -294,8 +294,9 @@ if 2 in Action:
     loadtrainBuff = 0
     TestEPOCH = 300  # choose the model to test after trained "TestEPOCH" epoches
     # generate a folder name list containing all the tested model output folders
-    caseLst = ["All"]
-    if optData["daObs"] > 0:
+    caseLst = [] #If you want to test model without DI, you must write "All" in caseLst,othervise it must be empty
+    # optData = default.update(default.optDataCamels, daObs=1)
+    if optData["daObs"] == 0:
         nDayLst = [1, 3]  # which DI models to test: DI(1), DI(3)
         for nDay in nDayLst:
             caseLst.append("All-DI" + str(nDay))
@@ -314,7 +315,7 @@ if 2 in Action:
             # load testing data
             mDict = readMasterFile(out)
             optData = mDict["data"]
-            df = camels.DataframeCamels(subset=subset, tRange=tRange,forType=optData['forType'])
+            df = camels.DataframeCamels(subset=subset, tRange=tRange, forType=optData['forType'])
             x = df.getDataTs(varLst=optData["varT"], doNorm=False, rmNan=False, flow_regime=flow_regime)
             obs = df.getDataObs(doNorm=False, rmNan=False, basinnorm=False, flow_regime=flow_regime)
             c = df.getDataConst(varLst=optData["varC"], doNorm=False, rmNan=False, flow_regime=flow_regime)
@@ -343,13 +344,29 @@ if 2 in Action:
                 ed = utils.time.t2dt(tRange[1]) - dt.timedelta(days=nDay)
                 dfdi = camels.DataframeCamels(subset=subset, tRange=[sd, ed])
                 datatemp = dfdi.getDataObs(
-                    doNorm=False, rmNan=False, basinnorm=True
-                )  # 'basinnorm=True': output = discharge/(area*mean_precip)
+                    doNorm=False, rmNan=False, basinnorm=True, flow_regime=flow_regime)
+                # 'basinnorm=True': output = discharge/(area*mean_precip)
                 # normalize data
-                dadata = camels.transNormbyDic(
-                    datatemp, "runoff", statDict, toNorm=True
+                dadataTest = camels.transNormbyDic(
+                    datatemp, "runoff", statDict, toNorm=True, flow_regime=flow_regime
                 )
-                dadata[np.where(np.isnan(dadata))] = 0.0
+                dadataTest[np.where(np.isnan(dadataTest))] = 0.0
+                dadata = dadataTest
+                if testTrainBuff:
+                    nDay = optData["daObs"]
+                    sd = utils.time.t2dt(Ttrain[0]) - dt.timedelta(days=nDay)
+                    ed = utils.time.t2dt(Ttrain[1]) - dt.timedelta(days=nDay)
+                    dfdi = camels.DataframeCamels(subset=subset, tRange=[sd, ed])
+                    datatemp = dfdi.getDataObs(
+                        doNorm=False, rmNan=False, basinnorm=True, flow_regime=flow_regime)
+                    # 'basinnorm=True': output = discharge/(area*mean_precip)
+                    # normalize data
+                    dadataTrain = camels.transNormbyDic(
+                        datatemp, "runoff", statDict, toNorm=True, flow_regime=flow_regime
+                    )
+                    dadataTrain[np.where(np.isnan(dadataTrain))] = 0.0
+                    dadata = np.concatenate([dadataTrain, dadataTest], axis=1)
+
                 xIn = np.concatenate([xTest, dadata], axis=2)
 
             else:
@@ -388,14 +405,21 @@ if 2 in Action:
             )
 
         # change the units ft3/s to m3/s
-        if testTrainBuff is True:
-            obs = obs[:, 0:, :] * 0.0283168
-        else:
-            obs = obs[:, TestBuff:, :] * 0.0283168
-        # obs = obs * 0.0283168
-        pred = pred[:, TestBuff:, :] * 0.0283168
+        # if testTrainBuff is True:
+        #     obs = obs[:, 0:, :] * 0.0283168
+        # else:
+        #     obs = obs * 0.0283168
+        # # obs = obs * 0.0283168
         # pred = pred * 0.0283168
-
+        # pred = pred * 0.0283168
+        #######
+        if testTrainBuff is True:
+            pred = pred[:, TestBuff:, :] * 0.0283168
+        else:
+            pred = pred * 0.0283168
+        # obs = obs * 0.0283168
+        obs = obs * 0.0283168
+        ##########
         # prediction and obs to mm/day
         obs = camels.basinTrans(obs, subset)
         pred = camels.basinTrans(pred, subset)
@@ -406,7 +430,7 @@ if 2 in Action:
 
     # Show boxplots of the results
     plt.rcParams["font.size"] = 14
-    keyLst = ["Bias", "NSE", "KGE", "FLV", "FHV", "AFLV", "AFHV", "highRMSE", "lowRMSE"]
+    keyLst = ["NSE", "KGE", "FLV", "FHV", "absFLV", "absFHV", "highRMSE", "lowRMSE", "midRMSE", "rdMax"]
     dataBox = list()
     for iS in range(len(keyLst)):
         statStr = keyLst[iS]
@@ -417,10 +441,9 @@ if 2 in Action:
             temp.append(data)
         dataBox.append(temp)
     print(
-        "Bias (mm/day), NSE,KGE, FLV, FHV, AFLV, AFHV, highRMSE (mm/day), lowRMSE (mm/day)",
-        np.nanmedian(dataBox[0][0]), np.nanmedian(dataBox[1][0]), np.nanmedian(dataBox[2][0]), np.nanmedian(dataBox[3][0]), np.nanmedian(dataBox[4][0]), np.nanmedian(dataBox[5][0]),
-        np.nanmedian(dataBox[6][0]), np.nanmedian(dataBox[7][0]), np.nanmedian(dataBox[8][0])
+        f"NSE : {np.nanmedian(dataBox[0][0])}\n,KGE : {np.nanmedian(dataBox[1][0])}\n, FLV : {np.nanmedian(dataBox[2][0])}\n, FHV : {np.nanmedian(dataBox[3][0])}\n, absFLV : {np.nanmedian(dataBox[4][0])}\n, absFHV : {np.nanmedian(dataBox[5][0])}\n, highRMSE (mm/day) : {np.nanmedian(dataBox[6][0])}\n, lowRMSE : {np.nanmedian(dataBox[7][0])}\n (mm/day),midRMSE : {np.nanmedian(dataBox[8][0])}\n(mm/day),rdMax : {np.nanmedian(dataBox[9][0])} ",
     )
+
     labelname = ["LSTM"]
     if optData["daObs"] > 0:
         for nDay in nDayLst:
